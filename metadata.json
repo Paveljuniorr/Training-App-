@@ -1,0 +1,6 @@
+{
+  "name": "Saitama Training",
+  "description": "A professional, modern, Saitama-inspired fitness and workout tracking app with local database storage and Gemini AI Coaching.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
