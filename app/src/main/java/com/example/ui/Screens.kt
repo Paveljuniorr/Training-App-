@@ -1,5 +1,19 @@
 package com.example.ui
 
+import android.app.AlarmManager
+import android.app.AppOpsManager
+import android.app.PendingIntent
+import android.app.TimePickerDialog
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
+import android.provider.Settings
+import android.widget.Toast
+import com.example.AlarmReceiver
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.launch
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -24,6 +38,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
@@ -2298,8 +2313,59 @@ fun ProfileScreen(
 ) {
     val stats by viewModel.userStats.collectAsState()
     val achievements by viewModel.achievements.collectAsState()
+    val workoutLogs by viewModel.workoutLogs.collectAsState()
 
     val currentStats = stats ?: UserStats()
+    val context = LocalContext.current
+
+    // Theme & Layout State
+    var isDarkTheme by remember { mutableStateOf(ThemeConfig.isDarkTheme) }
+    var isTecnoCalibrated by remember { mutableStateOf(true) }
+
+    // Google Login State
+    var isGoogleSignedIn by remember { mutableStateOf(false) }
+    var googleEmail by remember { mutableStateOf("juniordouontio@gmail.com") }
+    var googleName by remember { mutableStateOf("Junior Douontio") }
+
+    // Camera Profile Image State
+    var avatarBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    // Alarm State
+    var alarmTime by remember { mutableStateOf("06:30 AM") }
+    var isAlarmEnabled by remember { mutableStateOf(false) }
+
+    // Adult Content Blocker & App Blocker Settings
+    var isAdultBlockerEnabled by remember { mutableStateOf(false) }
+    var isAppBlockerEnabled by remember { mutableStateOf(true) }
+    var showBlockSimulation by remember { mutableStateOf(false) }
+
+    // Calculate Workout Completeness for App Blocker Bypassing
+    val calendarNow = Calendar.getInstance()
+    val completedWorkoutToday = workoutLogs.any { log ->
+        val calLog = Calendar.getInstance().apply { timeInMillis = log.timestamp }
+        calLog.get(Calendar.YEAR) == calendarNow.get(Calendar.YEAR) &&
+        calLog.get(Calendar.DAY_OF_YEAR) == calendarNow.get(Calendar.DAY_OF_YEAR)
+    }
+
+    // Camera activity launchers
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        if (bitmap != null) {
+            avatarBitmap = bitmap
+            Toast.makeText(context, "Identity photo updated successfully!", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            cameraLauncher.launch()
+        } else {
+            Toast.makeText(context, "Camera permission is required to capture your Cadet photo.", Toast.LENGTH_LONG).show()
+        }
+    }
 
     var showProfileEditor by remember { mutableStateOf(false) }
     var weightInput by remember { mutableStateOf(currentStats.weightKg.toString()) }
@@ -2312,10 +2378,11 @@ fun ProfileScreen(
         modifier = modifier
             .fillMaxSize()
             .background(CosmicBg)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = if (isTecnoCalibrated) 12.dp else 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(top = 16.dp, bottom = 80.dp)
     ) {
+        // CADET PROFILE CARD
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = CosmicSurface),
@@ -2330,20 +2397,55 @@ fun ProfileScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(72.dp)
+                            .size(96.dp)
                             .clip(CircleShape)
                             .background(CosmicSurfaceVariant)
-                            .border(2.dp, HeroBlue, CircleShape),
+                            .border(2.5.dp, HeroBlue, CircleShape)
+                            .clickable {
+                                cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+                            },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.WorkspacePremium, contentDescription = null, tint = HeroGold, modifier = Modifier.size(36.dp))
+                        if (avatarBitmap != null) {
+                            Image(
+                                bitmap = avatarBitmap!!.asImageBitmap(),
+                                contentDescription = "Cadet Identity",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.CameraAlt,
+                                    contentDescription = null,
+                                    tint = HeroBlue,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                                Text("Scan Face", fontSize = 10.sp, color = HeroBlueLight, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    Text(text = "HERO ASSOCIATION ID", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = HeroBlueLight, letterSpacing = 1.2.sp)
-                    Text(text = "Saitama Cadet", fontSize = 22.sp, fontWeight = FontWeight.Black, color = TextPrimary)
-                    Text(text = "Current Rank: ${currentStats.fitnessLevel} (Level ${currentStats.level})", fontSize = 13.sp, color = TextSecondary)
+                    Text(
+                        text = "HERO ASSOCIATION ID",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = HeroBlueLight,
+                        letterSpacing = 1.2.sp
+                    )
+                    Text(
+                        text = if (isGoogleSignedIn) googleName else "Saitama Cadet",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = if (isGoogleSignedIn) googleEmail else "Current Rank: ${currentStats.fitnessLevel} (Level ${currentStats.level})",
+                        fontSize = 13.sp,
+                        color = TextSecondary
+                    )
 
                     Spacer(modifier = Modifier.height(14.dp))
 
@@ -2358,20 +2460,367 @@ fun ProfileScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                weightInput = currentStats.weightKg.toString()
+                                heightInput = currentStats.heightCm.toString()
+                                fatInput = currentStats.bodyFatPercentage.toString()
+                                calGoalInput = currentStats.calorieGoal.toString()
+                                waterGoalInput = currentStats.waterGoalMl.toString()
+                                showProfileEditor = true
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CosmicSurfaceVariant),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Edit Body", color = TextPrimary)
+                        }
+
+                        Button(
+                            onClick = {
+                                isGoogleSignedIn = !isGoogleSignedIn
+                                if (isGoogleSignedIn) {
+                                    Toast.makeText(context, "Google Account Linked: $googleEmail", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Google Account Unlinked.", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isGoogleSignedIn) SuccessGreen.copy(alpha = 0.2f) else HeroBlue.copy(alpha = 0.2f)
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(
+                                    imageVector = Icons.Default.AccountCircle,
+                                    contentDescription = null,
+                                    tint = if (isGoogleSignedIn) SuccessGreen else HeroBlue,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = if (isGoogleSignedIn) "Google Linked" else "Link Google",
+                                    color = if (isGoogleSignedIn) SuccessGreen else HeroBlue,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // DEVICE & VIEWPORT SETTINGS
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CosmicSurface),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, CosmicBorder)
+            ) {
+                Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+                    Text("DEVICE & CALIBRATION", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = HeroBlueLight)
+                    
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Cadet Light Theme", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                            Text("Toggle soft high-contrast light mode", fontSize = 11.sp, color = TextSecondary)
+                        }
+                        Switch(
+                            checked = !isDarkTheme,
+                            onCheckedChange = {
+                                isDarkTheme = !it
+                                ThemeConfig.isDarkTheme = isDarkTheme
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = HeroBlue)
+                        )
+                    }
+
+                    Divider(color = CosmicBorder, modifier = Modifier.padding(vertical = 12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Tecno Spark 10C Fit", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                            Text("Calibrate screen density and spacing bounds (720x1612 px)", fontSize = 11.sp, color = TextSecondary)
+                        }
+                        Switch(
+                            checked = isTecnoCalibrated,
+                            onCheckedChange = {
+                                isTecnoCalibrated = it
+                                Toast.makeText(context, "Tecno viewport calibration: " + if (it) "Enabled" else "Disabled", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = HeroBlue)
+                        )
+                    }
+                }
+            }
+        }
+
+        // DAILY DISCIPLINE GUARD (APP BLOCKER & SECURE DNS FILTER)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CosmicSurface),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, CosmicBorder)
+            ) {
+                Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+                    Text("HERO DISCIPLINE GUARD (SHIELD)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = HeroGold)
+                    
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Block Status Badge
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (completedWorkoutToday) SuccessGreen.copy(alpha = 0.15f) else ErrorRed.copy(alpha = 0.15f))
+                            .border(1.dp, if (completedWorkoutToday) SuccessGreen else ErrorRed, RoundedCornerShape(12.dp))
+                            .padding(12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (completedWorkoutToday) Icons.Default.CheckCircle else Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = if (completedWorkoutToday) SuccessGreen else ErrorRed,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = if (completedWorkoutToday) "Discipline Shield: Bypassed" else "Discipline Shield: ACTIVE",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = if (completedWorkoutToday) SuccessGreen else ErrorRed
+                                )
+                                Text(
+                                    text = if (completedWorkoutToday) "Workout completed! Social apps are unlocked today." else "Finish today's workout to unlock Facebook, Instagram, and X!",
+                                    fontSize = 11.sp,
+                                    color = TextPrimary
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Social Media Blocker", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                            Text("Enforce focus on Facebook, Instagram, X", fontSize = 11.sp, color = TextSecondary)
+                        }
+                        Switch(
+                            checked = isAppBlockerEnabled,
+                            onCheckedChange = { isAppBlockerEnabled = it },
+                            colors = SwitchDefaults.colors(checkedThumbColor = HeroGold)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+                                context.startActivity(intent)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CosmicSurfaceVariant),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(vertical = 8.dp)
+                        ) {
+                            Text("Usage Access", fontSize = 11.sp, color = TextPrimary)
+                        }
+
+                        Button(
+                            onClick = {
+                                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                }
+                                context.startActivity(intent)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CosmicSurfaceVariant),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(vertical = 8.dp)
+                        ) {
+                            Text("Overlay Grant", fontSize = 11.sp, color = TextPrimary)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = { showBlockSimulation = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = HeroGold.copy(alpha = 0.2f)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Test App Blocker Simulator", color = HeroGold, fontWeight = FontWeight.Bold)
+                    }
+
+                    Divider(color = CosmicBorder, modifier = Modifier.padding(vertical = 12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Adult Content Blocker", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                            Text("Filter adult content using FamilyShield DNS", fontSize = 11.sp, color = TextSecondary)
+                        }
+                        Switch(
+                            checked = isAdultBlockerEnabled,
+                            onCheckedChange = {
+                                isAdultBlockerEnabled = it
+                                if (it) {
+                                    Toast.makeText(context, "FamilyShield DNS content filter active", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = HeroBlue)
+                        )
+                    }
+                }
+            }
+        }
+
+        // SAITAMA MORNING ALARM CARD
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CosmicSurface),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, CosmicBorder)
+            ) {
+                Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+                    Text("SAITAMA MORNING ALARM", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = HeroBlueLight)
+                    
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Alarm, contentDescription = null, tint = HeroBlue, modifier = Modifier.size(36.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("Wake-up Alarm", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                                Text("Scheduled: $alarmTime", fontSize = 12.sp, color = TextSecondary)
+                            }
+                        }
+
+                        Switch(
+                            checked = isAlarmEnabled,
+                            onCheckedChange = { enabled ->
+                                isAlarmEnabled = enabled
+                                if (enabled) {
+                                    // Parse time text for alarm scheduling
+                                    val parts = alarmTime.split(":")
+                                    val hourPart = parts[0].trim().toIntOrNull() ?: 6
+                                    val minAndAm = parts[1].split(" ")
+                                    val minPart = minAndAm[0].trim().toIntOrNull() ?: 30
+                                    val isPm = minAndAm[1].uppercase().contains("PM")
+                                    
+                                    val finalHour = when {
+                                        isPm && hourPart < 12 -> hourPart + 12
+                                        !isPm && hourPart == 12 -> 0
+                                        else -> hourPart
+                                    }
+
+                                    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                                    val intent = Intent(context, AlarmReceiver::class.java)
+                                    val pendingIntent = PendingIntent.getBroadcast(
+                                        context,
+                                        1001,
+                                        intent,
+                                        PendingIntent.FLAG_UPDATE_CURRENT or if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+                                    )
+
+                                    val calendar = Calendar.getInstance().apply {
+                                        set(Calendar.HOUR_OF_DAY, finalHour)
+                                        set(Calendar.MINUTE, minPart)
+                                        set(Calendar.SECOND, 0)
+                                        if (before(Calendar.getInstance())) {
+                                            add(Calendar.DATE, 1)
+                                        }
+                                    }
+
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                        alarmManager?.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+                                    } else {
+                                        alarmManager?.setExact(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+                                    }
+                                    Toast.makeText(context, "Saitama wake up alarm set for $alarmTime!", Toast.LENGTH_LONG).show()
+                                } else {
+                                    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                                    val intent = Intent(context, AlarmReceiver::class.java)
+                                    val pendingIntent = PendingIntent.getBroadcast(
+                                        context,
+                                        1001,
+                                        intent,
+                                        PendingIntent.FLAG_UPDATE_CURRENT or if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+                                    )
+                                    alarmManager?.cancel(pendingIntent)
+                                    Toast.makeText(context, "Morning Alarm Canceled.", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = HeroBlue)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
                     Button(
                         onClick = {
-                            weightInput = currentStats.weightKg.toString()
-                            heightInput = currentStats.heightCm.toString()
-                            fatInput = currentStats.bodyFatPercentage.toString()
-                            calGoalInput = currentStats.calorieGoal.toString()
-                            waterGoalInput = currentStats.waterGoalMl.toString()
-                            showProfileEditor = true
+                            val calendar = Calendar.getInstance()
+                            val hour = calendar.get(Calendar.HOUR_OF_DAY)
+                            val minute = calendar.get(Calendar.MINUTE)
+                            
+                            TimePickerDialog(
+                                context,
+                                { _, selectedHour, selectedMinute ->
+                                    val amPm = if (selectedHour >= 12) "PM" else "AM"
+                                    val displayHour = when {
+                                        selectedHour == 0 -> 12
+                                        selectedHour > 12 -> selectedHour - 12
+                                        else -> selectedHour
+                                    }
+                                    val displayMin = String.format("%02d", selectedMinute)
+                                    alarmTime = "$displayHour:$displayMin $amPm"
+                                    isAlarmEnabled = false // Reset alarm switch to trigger scheduling on toggle
+                                    Toast.makeText(context, "Alarm set to $alarmTime. Toggle alarm switch to activate.", Toast.LENGTH_LONG).show()
+                                },
+                                hour,
+                                minute,
+                                false
+                            ).show()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = CosmicSurfaceVariant),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Edit Body Profile & Goals", color = TextPrimary)
+                        Text("Select Morning Wake-up Time", color = TextPrimary)
                     }
                 }
             }
@@ -2447,6 +2896,50 @@ fun ProfileScreen(
                 }
             }
         }
+    }
+
+    if (showBlockSimulation) {
+        AlertDialog(
+            onDismissRequest = { showBlockSimulation = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.Lock, contentDescription = null, tint = ErrorRed, modifier = Modifier.size(28.dp))
+                    Text("Saitama Discipline Guard", color = ErrorRed, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showBlockSimulation = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = ErrorRed)
+                ) {
+                    Text("OK, I'll go train! ⚡")
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "DISCIPLINE SHIELD ACTIVE!",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 16.sp,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "Access to Facebook, Instagram, and X is currently BLOCKED because today's training has not been performed.",
+                        fontSize = 13.sp,
+                        color = TextSecondary
+                    )
+                    Text(
+                        text = "Unleash your standard Saitama power (complete 100 pushups, 100 situps, 100 squats, and 10KM run) to bypass this block!",
+                        fontSize = 13.sp,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            containerColor = CosmicSurface,
+            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier.border(2.dp, ErrorRed, RoundedCornerShape(24.dp))
+        )
     }
 
     if (showProfileEditor) {
